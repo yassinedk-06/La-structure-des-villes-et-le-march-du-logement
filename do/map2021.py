@@ -95,4 +95,10 @@ chemin_image = os.path.join(DOSSIER_OUTPUT, '03_carte_vacance_2021.png')
 plt.savefig(chemin_image, dpi=300, bbox_inches='tight')
 
 print(f"Termine ! La carte coloree est dans : {chemin_image}")
+
+# Sauvegarde des donnees propres pour le croisement final
+chemin_export = os.path.join(DOSSIER_OUTPUT, 'donnees_vacance_2021_propres.csv')
+df_2021.to_csv(chemin_export, index=False, sep=';')
+print(f"Données sauvegardées pour l'étape finale dans : {chemin_export}")
+
 plt.show()
