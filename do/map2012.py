@@ -68,7 +68,7 @@ carte_finale.plot(column='taux_vacance_rempli',
                   cmap='OrRd', 
                   legend=True,
                   scheme='UserDefined', 
-                  classification_kwds={'bins': [4, 6, 8, 10]}, # Tes propres seuils !
+                  classification_kwds={'bins': [5, 7, 9, 12]}, # Tes propres seuils !
                   legend_kwds={'title': "Taux de vacance 2012 (%)", 'loc': 'lower left'})
 
 ax.set_title("Taux de vacance des logements par commune (2012)", fontsize=15)
