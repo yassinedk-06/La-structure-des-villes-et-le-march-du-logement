@@ -11,82 +11,88 @@ DOSSIER_PROJET = os.path.dirname(CHEMIN_DO)
 DOSSIER_INPUT = os.path.join(DOSSIER_PROJET, 'input')
 DOSSIER_OUTPUT = os.path.join(DOSSIER_PROJET, 'output')
 
-# Recherche automatique du fichier Excel 2021
 fichiers_input = os.listdir(DOSSIER_INPUT)
 nom_excel_2021 = next((f for f in fichiers_input if '2021' in f and f.endswith('.xlsx')), None)
-chemin_carte = os.path.join(DOSSIER_INPUT, 'COMMUNE.SHP')
-
-if nom_excel_2021 is None:
-    print("ERREUR : Fichier Excel 2021 introuvable dans le dossier input.")
-    exit()
+nom_carte = "COMMUNE.SHP" 
 
 chemin_logement_2021 = os.path.join(DOSSIER_INPUT, nom_excel_2021)
+chemin_carte = os.path.join(DOSSIER_INPUT, nom_carte)
 
 # ==========================================
-# 2. LECTURE DU FICHIER EXCEL (Onglet COM)
+# 2. CHARGEMENT ET NETTOYAGE (Donnees)
 # ==========================================
-print(f"Lecture brute du fichier {nom_excel_2021}...")
+print("Chargement des donnees Insee 2021...")
+df_raw = pd.read_excel(chemin_logement_2021, sheet_name='COM', skiprows=10, engine='openpyxl')
 
-# header=None permet de tout lire sans chercher de titres
-df_raw = pd.read_excel(chemin_logement_2021, sheet_name='COM', header=None, engine='openpyxl')
+# Protection et nettoyage des codes communes
+col_codgeo = next((c for c in df_raw.columns if 'CODGEO' in str(c)), 'CODGEO')
+df_raw[col_codgeo] = df_raw[col_codgeo].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.zfill(5)
 
-print("\n--- DIAGNOSTIC VISUEL ---")
-# On affiche les 15 premieres lignes et les 5 premieres colonnes
-print(df_raw.iloc[0:15, 0:5]) 
-print("-------------------------\n")
-exit()
+print("Calcul des totaux avec CATL4...")
+# 1. Isolation des colonnes
+colonnes_vacantes = [col for col in df_raw.columns if 'CATL4' in str(col)]
+colonnes_totales = [col for col in df_raw.columns if 'CATL' in str(col)]
 
-# ==========================================
-# 3. PIVOTAGE ET CALCUL
-# ==========================================
-print("Transformation des donnees...")
-# On transforme les lignes de categories (1, 2, 3) en colonnes
-df_2021 = df_raw.pivot_table(index='CODGEO', columns='CATL', values='NB', aggfunc='sum').reset_index()
-df_2021 = df_2021.rename(columns={1: 'RP', 2: 'RS', 3: 'VAC'})
+# 2. Conversion en nombres
+df_vac_num = df_raw[colonnes_vacantes].apply(pd.to_numeric, errors='coerce').fillna(0)
+df_tot_num = df_raw[colonnes_totales].apply(pd.to_numeric, errors='coerce').fillna(0)
+
+# 3. Initialisation du dataframe 2021
+df_2021 = pd.DataFrame()
+df_2021['CODGEO_STR'] = df_raw[col_codgeo]
+df_2021['VAC'] = df_vac_num.sum(axis=1)
+df_2021['TOTAL'] = df_tot_num.sum(axis=1)
+
+# On evite les divisions par zero
+df_2021 = df_2021[df_2021['TOTAL'] > 0].copy()
 
 # Calcul du taux de vacance
-df_2021['TOTAL'] = df_2021['RP'] + df_2021['RS'] + df_2021['VAC']
-df_2021 = df_2021[df_2021['TOTAL'] > 0] # Eviter les divisions par zero
-df_2021['taux_vacance_2021'] = (df_2021['VAC'] / df_2021['TOTAL']) * 100
+df_2021['taux_vacance'] = (df_2021['VAC'] / df_2021['TOTAL']) * 100
 
 # ==========================================
-# 4. FUSION ET CORRECTION DES TROUS
+# 3. CHARGEMENT DE LA CARTE ET FUSION
 # ==========================================
-print("Fusion avec le fond de carte...")
+print("Chargement de la carte et fusion...")
 carte = gpd.read_file(chemin_carte)
 
-df_2021['CODGEO_STR'] = df_2021['CODGEO'].astype(str).str.zfill(5)
-carte['INSEE_STR'] = carte['INSEE_COM'].astype(str).str.zfill(5)
+# Harmonisation des codes Insee (5 chiffres) et protection
+carte['INSEE_STR'] = carte['INSEE_COM'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().str.zfill(5)
 
-# Fusion qui garde la forme de toutes les communes (how='left')
+# La fusion (how='left' pour garder toutes les frontieres)
 carte_finale = carte.merge(df_2021, left_on='INSEE_STR', right_on='CODGEO_STR', how='left')
 
-# Remplissage des communes manquantes avec la moyenne nationale 2021
-moyenne_nationale = carte_finale['taux_vacance_2021'].mean()
-carte_finale['taux_vacance_rempli'] = carte_finale['taux_vacance_2021'].fillna(moyenne_nationale)
+# DIAGNOSTIC
+nb_match = carte_finale['taux_vacance'].notna().sum()
+print(f"\nSUCCESS ! Nombre de communes fusionnees : {nb_match}\n")
 
 # ==========================================
-# 5. DESSIN DE LA CARTE 2021
+# 4. DESSIN DE LA CARTE
 # ==========================================
-print("Generation de la carte 2021...")
-fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+print("Generation de la carte thermique...")
+
+fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 
 # Fond gris de secours
 carte.plot(ax=ax, color='#d9d9d9', edgecolor='none')
 
+# Couche de donnees avec tes paliers personnalises
 # Couche de donnees
-carte_finale.plot(column='taux_vacance_rempli', 
+carte_finale.plot(column='taux_vacance', # (ou 'taux_vacance' pour 2012)
                   ax=ax, 
                   cmap='OrRd', 
                   legend=True,
-                  legend_kwds={'title': "Taux de vacance 2021 (%)", 'loc': 'lower left', 'fmt': "{:.1f}"},
-                  scheme='NaturalBreaks', k=5)
+                  scheme='UserDefined', 
+                  classification_kwds={'bins': [5, 7, 9, 12]}, # Tes propres seuils !
+                  legend_kwds={'title': "Taux de vacance 2021 (%)", 'loc': 'lower left'},
+                  missing_kwds={'color': 'none'},
+                  edgecolor='none') # <--- LA SOLUTION EST ICI ! LE COUP DE GOMME !
 
-ax.set_title("Evolution : Taux de vacance des logements par commune (2021)", fontsize=16)
+ax.set_title("Taux de vacance des logements par commune (2021)", fontsize=15)
 ax.axis('off')
 
+# Sauvegarde
 chemin_image = os.path.join(DOSSIER_OUTPUT, '03_carte_vacance_2021.png')
 plt.savefig(chemin_image, dpi=300, bbox_inches='tight')
 
-print(f"Termine ! Carte sauvegardee dans : {chemin_image}")
+print(f"Termine ! La carte coloree est dans : {chemin_image}")
 plt.show()

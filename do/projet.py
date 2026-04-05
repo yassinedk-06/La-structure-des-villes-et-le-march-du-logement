@@ -29,6 +29,9 @@ col_totaux = 'Logements en 2012 (princ)'
 df_2012[col_vacants] = pd.to_numeric(df_2012[col_vacants], errors='coerce')
 df_2012[col_totaux] = pd.to_numeric(df_2012[col_totaux], errors='coerce')
 
+# On evite les divisions par zero
+df_2012 = df_2012[df_2012[col_totaux] > 0].copy()
+
 # Calcul du taux de vacance
 df_2012['taux_vacance'] = (df_2012[col_vacants] / df_2012[col_totaux]) * 100
 
@@ -42,8 +45,12 @@ carte = gpd.read_file(chemin_carte)
 df_2012['CODGEO_STR'] = df_2012['Code géographique'].astype(str).str.zfill(5)
 carte['INSEE_STR'] = carte['INSEE_COM'].astype(str).str.zfill(5)
 
-# La fusion
-carte_finale = carte.merge(df_2012, left_on='INSEE_STR', right_on='CODGEO_STR')
+# La fusion (how='left' pour garder toutes les frontieres)
+carte_finale = carte.merge(df_2012, left_on='INSEE_STR', right_on='CODGEO_STR', how='left')
+
+# Remplissage des trous avec la moyenne de 2012
+moyenne_nationale = carte_finale['taux_vacance'].mean()
+carte_finale['taux_vacance_rempli'] = carte_finale['taux_vacance'].fillna(moyenne_nationale)
 
 # ==========================================
 # 4. DESSIN DE LA CARTE
@@ -52,14 +59,17 @@ print("Generation de la carte thermique...")
 
 fig, ax = plt.subplots(1, 1, figsize=(12, 10))
 
-# On dessine
-# On remplace label par title dans legend_kwds
-carte_finale.plot(column='taux_vacance', 
-            ax=ax, 
-            cmap='OrRd', 
-            legend=True,
-            legend_kwds={'title': "Taux de vacance (%)", 'loc': 'lower left'},
-            scheme='quantiles', k=5)
+# Fond gris de secours
+carte.plot(ax=ax, color='#d9d9d9', edgecolor='none')
+
+# Couche de donnees avec tes paliers personnalises
+carte_finale.plot(column='taux_vacance_rempli', 
+                  ax=ax, 
+                  cmap='OrRd', 
+                  legend=True,
+                  scheme='UserDefined', 
+                  classification_kwds={'bins': [4, 6, 8, 10]}, # Tes propres seuils !
+                  legend_kwds={'title': "Taux de vacance 2012 (%)", 'loc': 'lower left'})
 
 ax.set_title("Taux de vacance des logements par commune (2012)", fontsize=15)
 ax.axis('off')
